@@ -4,7 +4,7 @@
 -- ============================================================================
 
 BEGIN;
-SELECT plan(39);
+SELECT plan(45);
 
 -- ----------------------------------------------------------------------------
 -- 1. EXTENSIONS & FUNCTIONS
@@ -184,6 +184,91 @@ SELECT is(
     (SELECT total_paid FROM public.v_monthly_bill_summary WHERE user_id = 'a0000000-0000-0000-0000-000000000001' AND period_month = '2026-09-01'),
     25000.00::numeric,
     'v_monthly_bill_summary calculates correct total paid from disbursed payments'
+);
+
+-- ----------------------------------------------------------------------------
+-- 8. PHASE 3B: PAYMENTS & STATUS SYNCHRONIZATION TESTS
+-- ----------------------------------------------------------------------------
+SELECT has_function('public', 'sync_occurrence_payment_status', 'Function sync_occurrence_payment_status exists');
+SELECT has_view('public', 'v_bill_payment_status', 'View v_bill_payment_status exists');
+
+-- Composite FK check: Alice cannot record payment disbursing from Bob's account
+SELECT throws_ok(
+    $$ INSERT INTO public.payments (
+           user_id,
+           bill_occurrence_id,
+           account_id,
+           amount,
+           payment_date
+       ) VALUES (
+           'a0000000-0000-0000-0000-000000000001',
+           'a3333333-0000-0000-0000-000000000002',
+           'b1111111-0000-0000-0000-000000000001', -- Bob's account
+           500.00,
+           CURRENT_DATE
+       ) $$,
+    '23503',
+    NULL,
+    'Payment referencing account of another user must fail composite FK constraint'
+);
+
+-- Verify status transitions on partial, full payment, and deletion
+-- Create a test occurrence for Alice with amount 1000.00
+INSERT INTO public.bill_occurrences (
+    id, bill_id, user_id, period_month, due_date, amount, status
+) VALUES (
+    'a3333333-9999-0000-0000-000000000001',
+    'a2222222-0000-0000-0000-000000000001',
+    'a0000000-0000-0000-0000-000000000001',
+    '2026-10-01',
+    '2026-10-15',
+    1000.00,
+    'PENDING'
+);
+
+-- Partial payment of 400.00
+INSERT INTO public.payments (
+    id, user_id, bill_occurrence_id, account_id, amount, payment_date
+) VALUES (
+    'a7777777-0000-0000-0000-000000000001',
+    'a0000000-0000-0000-0000-000000000001',
+    'a3333333-9999-0000-0000-000000000001',
+    'a1111111-0000-0000-0000-000000000001',
+    400.00,
+    CURRENT_DATE
+);
+
+SELECT is(
+    (SELECT status FROM public.bill_occurrences WHERE id = 'a3333333-9999-0000-0000-000000000001'),
+    'PARTIAL',
+    'Partial payment automatically updates occurrence status to PARTIAL'
+);
+
+-- Additional payment of 600.00 (completes full 1000.00)
+INSERT INTO public.payments (
+    id, user_id, bill_occurrence_id, account_id, amount, payment_date
+) VALUES (
+    'a7777777-0000-0000-0000-000000000002',
+    'a0000000-0000-0000-0000-000000000001',
+    'a3333333-9999-0000-0000-000000000001',
+    'a1111111-0000-0000-0000-000000000001',
+    600.00,
+    CURRENT_DATE
+);
+
+SELECT is(
+    (SELECT status FROM public.bill_occurrences WHERE id = 'a3333333-9999-0000-0000-000000000001'),
+    'PAID',
+    'Full payment automatically updates occurrence status to PAID'
+);
+
+-- Delete the second payment: status must drop back to PARTIAL
+DELETE FROM public.payments WHERE id = 'a7777777-0000-0000-0000-000000000002';
+
+SELECT is(
+    (SELECT status FROM public.bill_occurrences WHERE id = 'a3333333-9999-0000-0000-000000000001'),
+    'PARTIAL',
+    'Deleting payment drops status back to PARTIAL'
 );
 
 SELECT * FROM finish();

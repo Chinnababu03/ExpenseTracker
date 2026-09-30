@@ -1,5 +1,5 @@
 -- ============================================================================
--- ExpenseFlow — Phase 1 Seed Data
+-- ExpenseFlow — Phase 1 & 2 Seed Data
 -- File: supabase/seed.sql
 -- ============================================================================
 
@@ -13,7 +13,13 @@ INSERT INTO auth.users (
     email,
     encrypted_password,
     email_confirmed_at,
+    confirmation_token,
+    recovery_token,
+    email_change_token_new,
+    email_change,
+    raw_app_meta_data,
     raw_user_meta_data,
+    is_super_admin,
     created_at,
     updated_at
 ) VALUES 
@@ -25,7 +31,13 @@ INSERT INTO auth.users (
     'alice@example.com',
     crypt('password123', gen_salt('bf')),
     now(),
+    '',
+    '',
+    '',
+    '',
+    '{"provider": "email", "providers": ["email"]}',
     '{"full_name": "Alice Sharma"}',
+    false,
     now(),
     now()
 ),
@@ -37,13 +49,58 @@ INSERT INTO auth.users (
     'bob@example.com',
     crypt('password123', gen_salt('bf')),
     now(),
+    '',
+    '',
+    '',
+    '',
+    '{"provider": "email", "providers": ["email"]}',
     '{"full_name": "Bob Verma"}',
+    false,
     now(),
     now()
 )
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+    encrypted_password = EXCLUDED.encrypted_password,
+    confirmation_token = '',
+    recovery_token = '',
+    email_change_token_new = '',
+    email_change = '',
+    raw_app_meta_data = EXCLUDED.raw_app_meta_data;
 
--- 2. Seed Operational Accounts
+-- 2. Create identities for GoTrue password auth
+INSERT INTO auth.identities (
+    id,
+    provider_id,
+    user_id,
+    identity_data,
+    provider,
+    last_sign_in_at,
+    created_at,
+    updated_at
+) VALUES
+(
+    'a0000000-0000-0000-0000-000000000001',
+    'a0000000-0000-0000-0000-000000000001',
+    'a0000000-0000-0000-0000-000000000001',
+    jsonb_build_object('sub', 'a0000000-0000-0000-0000-000000000001', 'email', 'alice@example.com'),
+    'email',
+    now(),
+    now(),
+    now()
+),
+(
+    'b0000000-0000-0000-0000-000000000002',
+    'b0000000-0000-0000-0000-000000000002',
+    'b0000000-0000-0000-0000-000000000002',
+    jsonb_build_object('sub', 'b0000000-0000-0000-0000-000000000002', 'email', 'bob@example.com'),
+    'email',
+    now(),
+    now(),
+    now()
+)
+ON CONFLICT (provider_id, provider) DO NOTHING;
+
+-- 3. Seed Operational Accounts
 INSERT INTO public.accounts (id, user_id, name, account_type, institution, currency, is_active) VALUES
     ('a1111111-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000001', 'HDFC Salary Account', 'BANK', 'HDFC Bank', 'INR', true),
     ('a1111111-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000001', 'Cash Wallet', 'CASH', 'Physical Wallet', 'INR', true),
@@ -51,7 +108,7 @@ INSERT INTO public.accounts (id, user_id, name, account_type, institution, curre
     ('b1111111-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-000000000002', 'SBI Savings', 'BANK', 'State Bank of India', 'INR', true)
 ON CONFLICT (id) DO NOTHING;
 
--- 3. Query seeded category IDs for bills & transactions
+-- 4. Query seeded category IDs for bills & transactions
 DO $$
 DECLARE
     v_alice_id UUID := 'a0000000-0000-0000-0000-000000000001';
